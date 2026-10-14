@@ -193,38 +193,55 @@ class TMDbHit:
     trailer_url: Optional[str] = None
 
     def to_movie_doc(self, stream_url: str) -> Dict[str, Any]:
-        """Project this hit into the Riyo `movies` collection schema."""
-        not_years_old = True
+        """
+        Project this hit into the Riyo `movies` collection schema — the same
+        shape that the Go AdminCreateMovie handler writes, so docs produced by
+        the bot are indistinguishable from admin-typed ones.
+        """
         import datetime as _dt
         now = _dt.datetime.utcnow()
-        return {
+        doc: Dict[str, Any] = {
+            # Movies struct fields (Mongo bson names match Go)
             "tmdbId": self.tmdb_id,
             "title": self.title,
-            "originalTitle": self.original_title,
-            "description": self.overview,
             "year": self.year,
-            "genre": self.genres,
-            "rating": self.rating,
-            "votes": self.vote_count,
-            "popularity": self.popularity,
             "posterUrl": self.poster_url,
-            "backdropUrl": self.backdrop_url,
+            "duration": 0,                      # unknown until played
             "language": self.original_language,
+            "genre": self.genres,
+            "description": self.overview,
+            "videoUrl": stream_url,
+            # StreamSource shape matches Riyo's Go model
+            "sources": [{
+                "label": "Telegram",
+                "url": stream_url,
+                "type": "direct",
+                "provider": "local",
+                "quality": "auto",
+                "latency": 0,
+                "isDead": False,
+            }],
+            "subtitles": [],
+            "contentType": "series" if self.media_type == "tv" else "movie",
+            "rating": self.rating,
             "cast": self.cast,
             "creators": self.creators,
-            "contentType": "series" if self.media_type == "tv" else "movie",
-            "isTvShow": self.media_type == "tv",
+            # AdminCreateMovie metadata
+            "sourceType": "admin",
             "isPublished": True,
-            "sourceType": "bot_ingest",
-            "videoUrl": stream_url,
-            "sources": [{"url": stream_url, "label": "Telegram", "quality": "auto"}],
-            "subtitles": [],
-            "views": 0,
+            "isTvShow": self.media_type == "tv",
+            "isKidsContent": "Family" in self.genres or "Animation" in self.genres,
+            "isTrending": False,
+            "isFeatured": False,
+            "status": "Active",
             "assignedSections": ["latest"],
-            "ingestedAt": now,
+            "views": 0,
+            "dailyViews": {},
+            "ingestedAt": now,                    # bot audit trail
             "createdAt": now,
             "updatedAt": now,
         }
+        return doc
 
 
 class TMDbClient:
