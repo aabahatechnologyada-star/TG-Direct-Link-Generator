@@ -35,6 +35,15 @@ async def root_route_handler(_):
         }
     )
 
+@routes.get("/health", allow_head=True)
+async def health_handler(_):
+    # Lightweight liveness probe for Render/Railway health checks.
+    return web.json_response({
+        "status": "ok",
+        "clients": len(multi_clients),
+        "sessions_cached": len(class_cache),
+    })
+
 @routes.get(r"/watch/{path:\S+}", allow_head=True)
 async def stream_handler(request: web.Request):
     try:
@@ -151,6 +160,11 @@ async def media_streamer(request: web.Request, message_id: int, secure_hash: str
             "Content-Range": f"bytes {from_bytes}-{until_bytes}/{file_size}",
             "Content-Disposition": f'{disposition}; filename="{file_name}"',
             "Accept-Ranges": "bytes",
+            # Allow browser/CDN re-use of fetched segments for 1 hour. Critical
+            # for HLS players that may re-request a segment after a transient
+            # network error mid-playback.
+            "Cache-Control": "public, max-age=3600",
+            "ETag": f'"{message_id:x}-{file_size:x}-{secure_hash}"',
         },
     )
 

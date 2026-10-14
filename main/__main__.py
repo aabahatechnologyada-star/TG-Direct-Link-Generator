@@ -133,6 +133,12 @@ async def start_services():
     )
     await initialize_clients()
     print("------------------------------ DONE ------------------------------")
+
+    # Pre-warm DC media sessions in background so first playback request to a
+    # remote DC doesn't pay the auth handshake. Fire-and-forget.
+    if getattr(Var, "PREWARM_DCS", False):
+        asyncio.create_task(utils.prewarm_media_sessions())
+        print("---------------- DC Prewarm Started (background) ---------------")
     if Var.ON_HEROKU:
         print("------------------ Starting Keep Alive Service ------------------")
         print()

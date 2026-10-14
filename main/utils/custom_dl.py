@@ -15,7 +15,9 @@ from pyrogram.file_id import FileId, FileType, ThumbnailSource
 
 
 async def chunk_size(length):
-    return 2 ** max(min(math.ceil(math.log2(length / 1024)), 10), 2) * 1024
+    # 4MB chunks (was 512KB) — each chunk is one MTProto round trip, so larger
+    # chunks directly reduce the round-trip count by 8× for typical video.
+    return 2 ** max(min(math.ceil(math.log2(length / 1024)), 12), 2) * 1024
 
 
 async def offset_fix(offset, chunksize):
@@ -182,50 +184,85 @@ class ByteStreamer:
         chunk_size: int,
     ) -> Union[str, None]:
         """
-        Custom generator that yields the bytes of the media file.
-        Modded from <https://github.com/eyaadh/megadlbot_oss/blob/master/mega/telegram/utils/custom_download.py#L20>
-        Thanks to Eyaadh <https://github.com/eyaadh>
+        Pipelined file yielder. Fetches up to PARALLEL_CHUNKS chunks in flight
+        per client via asyncio tasks so the effective per-request throughput
+        is bounded by MTProto bandwidth, not RTT latency.
         """
         client = self.client
         work_loads[index] += 1
-        logging.debug(f"Starting to yielding file with client {index}.")
         media_session = await self.generate_media_session(client, file_id)
-
-        current_part = 1
-
         location = await self.get_location(file_id)
 
-        try:
+        # How many chunk requests to keep in flight at once. 4 is safe for
+        # Pyrogram; higher values bump against FloodWait under load.
+        PARALLEL = 4
+
+        # Every fetch is one GetFile call at a specific byte offset.
+        async def fetch(off):
             r = await media_session.send(
-                raw.functions.upload.GetFile(
-                    location=location, offset=offset, limit=chunk_size
-                ),
+                raw.functions.upload.GetFile(location=location, offset=off, limit=chunk_size),
             )
             if isinstance(r, raw.types.upload.File):
-                while current_part <= part_count:
-                    chunk = r.bytes
-                    if not chunk:
-                        break
-                    offset += chunk_size
-                    if part_count == 1:
-                        yield chunk[first_part_cut:last_part_cut]
-                        break
-                    if current_part == 1:
-                        yield chunk[first_part_cut:]
-                    if 1 < current_part <= part_count:
-                        yield chunk
+                return r.bytes
+            return b""
 
-                    r = await media_session.send(
-                        raw.functions.upload.GetFile(
-                            location=location, offset=offset, limit=chunk_size
-                        ),
-                    )
+        try:
+            # Queue of (chunk index, byte offset) to fetch.
+            chunk_queue = []
+            cur_offset = offset
+            for part in range(1, part_count + 1):
+                chunk_queue.append((part, cur_offset))
+                cur_offset += chunk_size
 
-                    current_part += 1
+            # Sliding window: submit PARALLEL at a time, yield in order.
+            pending = []  # list of asyncio.Task
+            next_iter = iter(enumerate(chunk_queue))
+            in_order_buffer = {}  # part_index (1-based) -> bytes
+
+            async def submit_one():
+                try:
+                    _, (part, off) = next(next_iter)
+                except StopIteration:
+                    return False
+                t = asyncio.create_task(fetch(off))
+                pending.append((part, t))
+                return True
+
+            # Prime the window.
+            for _ in range(min(PARALLEL, len(chunk_queue))):
+                await submit_one()
+
+            current_part = 1
+            while pending:
+                # Wait for the *next expected* task so we can yield in order.
+                for (part, task) in list(pending):
+                    if part == current_part and task.done():
+                        pending.remove((part, task))
+                        chunk = task.result()
+                        if not chunk:
+                            # empty chunk = EOF
+                            return
+                        if part_count == 1:
+                            yield chunk[first_part_cut:last_part_cut]
+                        elif current_part == 1:
+                            yield chunk[first_part_cut:]
+                        elif current_part == part_count:
+                            yield chunk[:last_part_cut]
+                        else:
+                            yield chunk
+                        current_part += 1
+                        # Backfill the pipelined window.
+                        if await submit_one():
+                            pass
+                        break
+                else:
+                    # Next part hasn't finished — wait briefly for it.
+                    await asyncio.sleep(0.005)
         except (TimeoutError, AttributeError):
             pass
         finally:
-            logging.debug("Finished yielding file with {current_part} parts.")
+            for (_, t) in pending:
+                t.cancel()
             work_loads[index] -= 1
 
     
@@ -237,3 +274,43 @@ class ByteStreamer:
             await asyncio.sleep(self.clean_timer)
             self.cached_file_ids.clear()
             logging.debug("Cleaned the cache")
+
+
+async def prewarm_media_sessions():
+    """
+    Forge media sessions to all known Telegram DCs at startup so the first
+    incoming request to a "cold" DC doesn't pay the ExportAuthorization +
+    ImportAuthorization handshake (which can add 300–800 ms per first fetch).
+
+    DCs 1..5 cover all current production regions. Failures are non-fatal —
+    the session will be created lazily on first use anyway.
+    """
+    from main.bot import StreamBot
+    if not getattr(Var, "PREWARM_DCS", False):
+        return
+    logging.info("Pre-warming DC media sessions (1..5)")
+    from pyrogram.session import Session, Auth
+    from pyrogram import raw
+    for dc in range(1, 6):
+        try:
+            if dc == await StreamBot.storage.dc_id():
+                continue
+            sess = Session(
+                StreamBot,
+                dc,
+                await Auth(StreamBot, dc, await StreamBot.storage.test_mode()).create(),
+                await StreamBot.storage.test_mode(),
+                is_media=True,
+            )
+            await sess.start()
+            for _ in range(6):
+                exported = await StreamBot.send(raw.functions.auth.ExportAuthorization(dc_id=dc))
+                try:
+                    await sess.send(raw.functions.auth.ImportAuthorization(id=exported.id, bytes=exported.bytes))
+                    break
+                except Exception as e:
+                    logging.debug(f"Pre-warm auth for DC {dc} attempt failed: {e}")
+            StreamBot.media_sessions[dc] = sess
+            logging.info(f"✅ DC {dc} media session ready")
+        except Exception as e:
+            logging.warning(f"⚠️ Failed to pre-warm DC {dc}: {e}")

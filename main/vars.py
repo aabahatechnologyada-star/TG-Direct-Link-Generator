@@ -13,6 +13,10 @@ class Var(object):
     BOT_TOKEN = str(environ.get("BOT_TOKEN"))
     SLEEP_THRESHOLD = int(environ.get("SLEEP_THRESHOLD", "60"))  # 1 minute
     WORKERS = int(environ.get("WORKERS", "6"))  # 6 workers = 6 commands at once
+    # New perf knobs (still env-configurable).
+    PARALLEL_CHUNKS = int(environ.get("PARALLEL_CHUNKS", "4"))
+    PREWARM_DCS = environ.get("PREWARM_DCS", "1")
+    PREWARM_DCS = str(PREWARM_DCS).lower() in ("1", "true", "yes")
     BIN_CHANNEL = int(
         environ.get("BIN_CHANNEL", None)
     )  # you NEED to use a CHANNEL when you're using MULTI_CLIENT
