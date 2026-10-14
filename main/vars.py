@@ -49,3 +49,10 @@ class Var(object):
 
     BANNED_CHANNELS = list(set(int(x) for x in str(environ.get("BANNED_CHANNELS", "-1001296894100")).split()))
     BANNED_USERS = list(set(int(x) for x in str(environ.get("BANNED_USERS","5275470552 5287015877")).split()))
+
+    # Ingestion pipeline (see main/bot/plugins/ingest.py)
+    INGEST_CHANNEL = int(environ.get("INGEST_CHANNEL", "0"))
+    TMDB_API_KEY = str(environ.get("TMDB_API_KEY", ""))
+    MONGO_URI = str(environ.get("MONGO_URI", ""))
+    MONGO_DB = str(environ.get("MONGO_DB", "riyo"))
+    INGEST_MIN_BYTES = int(environ.get("INGEST_MIN_BYTES", str(10 * 1024 * 1024)))

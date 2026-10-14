@@ -5,3 +5,4 @@ aiofiles
 pytz
 ntplib
 python-dotenv
+motor
