@@ -129,6 +129,12 @@ async def start_services():
     bot_info = await StreamBot.get_me()
     StreamBot.username = bot_info.username
     print("------------------------------ DONE ------------------------------")
+
+    # Fetch BIN_CHANNEL chat to ensure peer is cached in Pyrogram session memory
+    try:
+        await StreamBot.get_chat(Var.BIN_CHANNEL)
+    except Exception as peer_err:
+        logging.warning(f"Unable to fetch BIN_CHANNEL chat details: {peer_err}")
     print()
     print(
         "---------------------- Initializing Clients ----------------------"
