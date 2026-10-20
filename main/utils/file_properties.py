@@ -80,7 +80,7 @@ async def gen_link(m: Message,log_msg: Messages, from_channel: bool):
     file_name = get_name(log_msg)
     file_size = humanbytes(get_media_file_size(log_msg))
 
-    page_link = f"{Var.URL}watch/{get_hash(log_msg)}{log_msg.message_id}"
+    page_link = f"{Var.URL}watch/{get_hash(log_msg)}{log_msg.id}"
     stream_link = f"{Var.URL}{log_msg.message_id}/{quote_plus(get_name(m))}?hash={get_hash(log_msg)}"
     Stream_Text=lang.stream_msg_text.format(file_name, file_size, stream_link, page_link)
     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🖥STREAM", url=page_link), InlineKeyboardButton("Dᴏᴡɴʟᴏᴀᴅ 📥", url=stream_link)]])
