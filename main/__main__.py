@@ -13,8 +13,16 @@ try:
 except AttributeError:
     pass
 
-# This file is a part of TG-Direct-Link-Generator
+# Ensure event loop is created and set BEFORE importing pyrogram or modules importing pyrogram
 import asyncio
+
+try:
+    loop = asyncio.get_event_loop_policy().get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+# This file is a part of TG-Direct-Link-Generator
 import logging
 import pytz
 import ntplib
@@ -41,12 +49,6 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.web").setLevel(logging.ERROR)
 
 server = web.AppRunner(web_server())
-
-if sys.version_info[1] > 9:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-else:
-    loop = asyncio.get_event_loop()
 
 
 def sync_time():

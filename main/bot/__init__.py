@@ -1,5 +1,11 @@
 # This file is a part of TG-Direct-Link-Generator
 
+import asyncio
+
+try:
+    asyncio.get_event_loop_policy().get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 from ..vars import Var
 from pyrogram import Client
