@@ -13,7 +13,10 @@ try:
 except AttributeError:
     pass
 
-# Ensure event loop is created and set BEFORE importing pyrogram
+# ============================================================
+# FIX: Create event loop FIRST (Python 3.14 requirement)
+# Pyrogram 2.0.106 calls asyncio.get_event_loop() on import
+# ============================================================
 import asyncio
 
 try:
@@ -24,7 +27,7 @@ except RuntimeError:
 
 # ============================================================
 # FIX: Monkey patch Pyrogram peer ID resolution (-100 channels)
-# MUST be before importing StreamBot / pyrogram clients
+# MUST be after event loop is set, before importing StreamBot
 # ============================================================
 from pyrogram import utils as pyrogram_utils
 
@@ -182,13 +185,16 @@ async def start_services():
     await initialize_clients()
     print("------------------------------ DONE ------------------------------")
 
+    # Pre-warm DC media sessions in background
     if getattr(Var, "PREWARM_DCS", False):
         asyncio.create_task(utils.prewarm_media_sessions())
         print("---------------- DC Prewarm Started (background) ---------------")
+
     if Var.ON_HEROKU:
         print("------------------ Starting Keep Alive Service ------------------")
         print()
         asyncio.create_task(utils.ping_server())
+
     print("--------------------- Initializing Web Server ---------------------")
     await server.setup()
     bind_address = "0.0.0.0" if Var.ON_HEROKU else Var.BIND_ADDRESS
