@@ -1,9 +1,6 @@
 import os
 import sys
 
-# ============================================================
-# FIX: Environment setup BEFORE any other imports
-# ============================================================
 os.environ["PYROGRAM_IGNORE_TIME"] = "1"
 os.environ['TZ'] = 'Africa/Mogadishu'
 
@@ -14,8 +11,7 @@ except AttributeError:
     pass
 
 # ============================================================
-# FIX: Create event loop FIRST (Python 3.14 requirement)
-# Pyrogram 2.0.106 calls asyncio.get_event_loop() on import
+# FIX: Create event loop FIRST (Python 3.14 / 3.12 requirement)
 # ============================================================
 import asyncio
 
@@ -27,7 +23,7 @@ except RuntimeError:
 
 # ============================================================
 # FIX: Monkey patch Pyrogram peer ID resolution (-100 channels)
-# MUST be after event loop is set, before importing StreamBot
+# MUST be after event loop, before importing StreamBot
 # ============================================================
 from pyrogram import utils as pyrogram_utils
 
@@ -78,6 +74,8 @@ def sync_time():
     client = ntplib.NTPClient()
     for server_addr in ntp_servers:
         try:
+            # Try to resolve and connect using both IPv4 and IPv6 if available,
+            # but force IPv4 if we suspect ai_socktype issues
             response = client.request(server_addr, version=3, timeout=5)
             ntp_time = response.tx_time
             system_time = time.time()
@@ -98,10 +96,6 @@ def sync_time():
 
 
 async def _resolve_bin_channel():
-    """
-    Force Pyrogram session to learn BIN_CHANNEL peer.
-    Tries get_chat() first, falls back to get_dialogs() iteration.
-    """
     try:
         chat = await StreamBot.get_chat(Var.BIN_CHANNEL)
         print(f"✅ BIN_CHANNEL resolved: {chat.title} ({chat.id})")
@@ -112,15 +106,11 @@ async def _resolve_bin_channel():
     try:
         async for dialog in StreamBot.get_dialogs():
             if dialog.chat and dialog.chat.id == Var.BIN_CHANNEL:
-                print(f"✅ BIN_CHANNEL found in dialogs: {dialog.chat.title} ({dialog.chat.id})")
+                print(f"✅ BIN_CHANNEL found: {dialog.chat.title}")
                 return True
-        logging.error(
-            f"❌ BIN_CHANNEL {Var.BIN_CHANNEL} not found in dialogs. "
-            "Make sure the bot is an ADMIN in that channel."
-        )
+        logging.error(f"❌ BIN_CHANNEL {Var.BIN_CHANNEL} not found. Bot must be ADMIN.")
     except Exception as e2:
         logging.error(f"❌ get_dialogs failed: {e2}")
-
     return False
 
 
@@ -130,6 +120,7 @@ async def start_services():
     print()
     print("-------------------- Initializing Telegram Bot --------------------")
 
+    # Try to start with retry logic
     max_retries = 10
     retry_delay = 5
 
@@ -143,6 +134,7 @@ async def start_services():
                 print(f"⚠️ Time sync error (attempt {attempt+1}/{max_retries})")
                 print(f"   Error: {e}")
 
+                # In Pyrogram v2, adjust the offset
                 try:
                     if hasattr(StreamBot, "session"):
                         StreamBot.session.time_offset = int(time_offset) if time_offset != 0 else 0
@@ -162,6 +154,7 @@ async def start_services():
                 await asyncio.sleep(retry_delay)
                 continue
             else:
+                # Catch the filter error here if it still happens despite our sed
                 if "edited" in str(e) and "filters" in str(e):
                     logging.error("Detected missing 'edited' filter attribute. Please check plugins.")
                 logging.error(f"Unexpected Error during startup: {e}", exc_info=True)
@@ -170,31 +163,27 @@ async def start_services():
         print("❌ Failed to start bot after multiple attempts")
         return
 
+    await _resolve_bin_channel()
+
     bot_info = await StreamBot.get_me()
     StreamBot.username = bot_info.username
     print("------------------------------ DONE ------------------------------")
-
-    # ============================================================
-    # FIX: Resolve BIN_CHANNEL with fallback
-    # ============================================================
-    await _resolve_bin_channel()
-    # ============================================================
-
     print()
-    print("---------------------- Initializing Clients ----------------------")
+    print(
+        "---------------------- Initializing Clients ----------------------"
+    )
     await initialize_clients()
     print("------------------------------ DONE ------------------------------")
 
-    # Pre-warm DC media sessions in background
+    # Pre-warm DC media sessions in background so first playback request to a
+    # remote DC doesn't pay the auth handshake. Fire-and-forget.
     if getattr(Var, "PREWARM_DCS", False):
         asyncio.create_task(utils.prewarm_media_sessions())
         print("---------------- DC Prewarm Started (background) ---------------")
-
     if Var.ON_HEROKU:
         print("------------------ Starting Keep Alive Service ------------------")
         print()
         asyncio.create_task(utils.ping_server())
-
     print("--------------------- Initializing Web Server ---------------------")
     await server.setup()
     bind_address = "0.0.0.0" if Var.ON_HEROKU else Var.BIND_ADDRESS
